@@ -7,6 +7,8 @@ from Bio.PDB import Superimposer
 from Bio.PDB.PDBIO import PDBIO
 from Bio.PDB.Structure import Structure
 from copy import deepcopy
+import pandas as pd
+from xi_covutils.distances import calculate_distances
 
 def load_domains():
   domains_file = os.path.join(
@@ -217,6 +219,38 @@ def main():
   # Los dos CRE estan en el mismo PDB como dos cadenas
   # diferentes.
   export_aligned_cre_pdb(up1, up2, up_chain_map, struc1)
+
+  # Calcula las distancias
+  dist_data = calculate_distances(struc1)
+
+  # Selecciona las distancias entre los dos CRE
+  dist_df = (
+    pd.DataFrame(
+      dist_data,
+      columns = ["chain1", "pos1", "chain2", "pos2", "distance"]
+    )
+    .query("chain1!=chain2")
+  )
+
+  # Exporta las distancias entre los CRE a un CSV
+  export_distances(up1, up2, up_chain_map, dist_df)
+
+def export_distances(up1, up2, up_chain_map, dist_df):
+  dist_file = os.path.join(
+    "data",
+    "output",
+    f"distances_{up1}_{up2}_"
+    f"{up_chain_map[up1][0]}_"
+    f"{up_chain_map[up2][0]}"
+    ".csv"
+  )
+  (
+    dist_df
+      .loc[:, "distance"]
+      .reset_index(drop=True)
+      .to_csv(dist_file, index=False, header = False)
+  )
+
 
 def read_pdb(up, up_chain_map):
   pdb_file = (
