@@ -5,10 +5,11 @@
 .vscode
 
 # Some data files
-
 data/intermediate
-
 data/output/*
 !data/output/example/
 data/input/*
 !data/input/example/
+
+# log file
+log

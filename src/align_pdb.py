@@ -1,17 +1,22 @@
-from itertools import combinations
 import json
+import logging
 import os
+from copy import deepcopy
+from itertools import combinations
+from logging import WARNING
 from typing import Dict, List, Tuple
+
+from tqdm import tqdm
 import click
+import pandas as pd
 from Bio import SeqIO
-from Bio.PDB.PDBParser import PDBParser
 from Bio.PDB import Superimposer
 from Bio.PDB.PDBIO import PDBIO
+from Bio.PDB.PDBParser import PDBParser
 from Bio.PDB.Structure import Structure
-from copy import deepcopy
-import pandas as pd
 from xi_covutils.distances import calculate_distances
 from xi_covutils.pdbmapper import align_pdb_to_sequence
+
 
 def load_domains():
   domains_file = os.path.join(
@@ -21,6 +26,8 @@ def load_domains():
   )
   with open(domains_file, "r", encoding="utf8") as f_in:
     domains = json.load(f_in)
+  print(f"- Cargando dominios:")
+  print(f"  - Número de dominios: {len(domains)}")
   return domains
 
 def load_aln():
@@ -33,6 +40,8 @@ def load_aln():
     r.id : str(r.seq)
     for r in SeqIO.parse(aln_file, "fasta")
   }
+  print(f"- Cargando alineamiento: {aln_file}")
+  print(f"  - Número de secuencias: {len(records)}")
   return records
 
 def enumerate_in_aln(seq_aln:str) -> List[Tuple[int, str]]:
@@ -97,6 +106,8 @@ def load_pdb_mappings(up_map):
           for p1, p2 in data.items()
         }
       result[(k, pdb)] = data
+  print(f"- Cargando Mapeo de posiciones de Uniprot a PDB:")
+  print(f"  - Mapeos cargados: {len(result)}")
   return result
 
 def load_up_maps():
@@ -107,6 +118,8 @@ def load_up_maps():
   )
   with open(mapping_file, "r", encoding="utf-8") as f_in:
     data = json.load(f_in)
+  print(f"- Cargando Mapeo de identificadores de Uniprot a PDB/Cadena")
+  print(f"  - Número de Uniprots: {len(data)}")
   return data
 
 def retain_region(struct, chain, region):
@@ -195,11 +208,9 @@ def get_cre_distance_two_kinases(
     pdb_map1,
     pdb_map2
   )
-
   # Lee los archivos PDBs
   struc1 = read_pdb(pdb1, up1)
   struc2 = read_pdb(pdb2, up2)
-
   # Extrae los atomos comparables de los dominios Kinasas
   kinase1 = [
     struc1[0][chain1][r]["CA"]
@@ -209,21 +220,17 @@ def get_cre_distance_two_kinases(
     struc2[0][chain2][r]["CA"]
     for r in pdbpos2
   ]
-
   # Alinear los atomos y obtener la matriz de rotacion
   # set_atoms, genera las matrices de translacion y rotacion.
   # El primer conjunto de atomos esta fijo y el segundo es el movil.
   sup = Superimposer()
   sup.set_atoms(kinase1, kinase2)
-
   # Aplica la rotacion a la segunda estructura completa.
   sup.apply(struc2)
-
   # Exportar full PDB aligned
   # Las dos estructuras se guardan en el mismo archivo pdb como dos
   # modelos diferentes.
   export_aligned_full_pdbs(up1, up2, pdb1, pdb2, struc1, struc2)
-
   # Extrae los números de residuos de los CRE
   # de las dos estructuras.
   pdbpos_cre1, pdbpos_cre2 = region_in_pdb(
@@ -234,27 +241,22 @@ def get_cre_distance_two_kinases(
     up_pdb_pos_map[(up1, pdb1)],
     up_pdb_pos_map[(up2, pdb2)]
   )
-
   # Elimina todas las cadenas y residuos de las estructuras
   # excepto aquellos que pertenecen al CRE.
   retain_region(struc1, chain1, pdbpos_cre1)
   retain_region(struc2, chain2, pdbpos_cre2)
-
   # Mergear los dos cre en una sola estructura
   # La cadena de la primer estructura pasa a ser A
   # y la cadena de la segunda pasa a ser B.
   struc1[0][chain1].id = "A"
   struc2[0][chain2].id = "B"
   struc1[0].add(struc2[0]["B"])
-
   # Exportar PDB de los CRE
   # Los dos CRE estan en el mismo PDB como dos cadenas
   # diferentes.
   export_aligned_cre_pdb(up1, up2, pdb1, pdb2, struc1)
-
   # Calcula las distancias
   dist_data = calculate_distances(struc1)
-
   # Selecciona las distancias entre los dos CRE
   dist_df = (
     pd.DataFrame(
@@ -263,10 +265,8 @@ def get_cre_distance_two_kinases(
     )
     .query("chain1!=chain2")
   )
-
   # Exporta las distancias entre los CRE a un CSV
   export_distances(up1, pdb1, up2, pdb2, dist_df)
-
   min_dist = dist_df.distance.min()
   mean_dist = dist_df.distance.mean()
   df_cre = pd.DataFrame(
@@ -283,10 +283,9 @@ def get_cre_distance_two_kinases(
   )
   return min_dist, mean_dist, aligned_mean
 
-
 @click.command()
 def align_kinases():
-  print("Aligning PDBs Kinases")
+  print("Align Kinases PDBs and Calculate CRE distances\n")
   # Carga el alineamiento entre las dos secuencias.
   aln = load_aln()
   # Carga el mapeo de uniprot accession a PDB Id y cadena.
@@ -305,9 +304,11 @@ def align_kinases():
   up_pdb_pos_map = load_pdb_mappings(up_chain_map)
   # Alinea las kinasas y calcula las distancias del CRE en todos los pares
   distances = []
-  for elem1, elem2 in pairs_to_compare:
+  print("- Alineando y calculando distancias:")
+  for elem1, elem2 in (pbar:= tqdm(pairs_to_compare)):
     up1, pdb1, chain1, seq1 = elem1
     up2, pdb2, chain2, seq2 = elem2
+    pbar.set_description(f"  - {up1}-{pdb1}:{chain1} vs. {up2}-{pdb2}:{chain2}")
     mind, meand, aln_mean = get_cre_distance_two_kinases(
       up1, pdb1, chain1, seq1,
       up2, pdb2, chain2, seq2,
@@ -321,6 +322,10 @@ def align_kinases():
         mind, meand, aln_mean
       ]
     )
+  # Expotar distance summary
+  export_distance_summary(distances)
+
+def export_distance_summary(distances):
   dist_file = os.path.join(
     "data",
     "output",
@@ -339,6 +344,7 @@ def align_kinases():
     dist_file,
     index = False
   )
+  print(f"- Guardando resumen de distancias: {dist_file}")
 
 
 def export_distances(up1, pdb1, up2, pdb2, dist_df):
@@ -383,22 +389,29 @@ def export_aligned_cre_pdb(up1, up2, pdb1, pdb2, struct):
 
 @click.group()
 def cli():
-  print("Align PDBS")
+  print("######### Aligner App ##########\n")
 
 @click.command()
 def create_pdb_mappings():
-  print("Generating Uniprot to PDB Mappings")
+  print("Generating Uniprot to PDB Mappings\n")
   # Carga el alineamiento entre las dos secuencias.
   aln = load_aln()
-
   # Carga el mapeo de uniprot accession a PDB Id y cadena.
   up_chain_map = load_up_maps()
-
   # Crea los mapeos de las secuencias de Uniprot a los PDB.
   create_up_to_pdb_maps(aln, up_chain_map)
 
 cli.add_command(create_pdb_mappings)
 cli.add_command(align_kinases)
 
+def config_logging():
+  logging.basicConfig(
+    filename="log",
+    encoding="utf-8",
+    level=logging.WARNING
+  )
+  logging.captureWarnings(True)
+
 if __name__ == '__main__':
+  config_logging()
   cli()
