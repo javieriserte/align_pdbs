@@ -1,6 +1,8 @@
+from itertools import combinations
 import json
 import os
 from typing import Dict, List, Tuple
+import click
 from Bio import SeqIO
 from Bio.PDB.PDBParser import PDBParser
 from Bio.PDB import Superimposer
@@ -9,6 +11,7 @@ from Bio.PDB.Structure import Structure
 from copy import deepcopy
 import pandas as pd
 from xi_covutils.distances import calculate_distances
+from xi_covutils.pdbmapper import align_pdb_to_sequence
 
 def load_domains():
   domains_file = os.path.join(
@@ -50,7 +53,7 @@ def region_in_pdb(
     reg2: Tuple[int, int],
     map1: Dict[int, int],
     map2: Dict[int, int]
-  ) -> Tuple[List[int], List[int]]:
+  ) -> Tuple[Tuple[int], Tuple[int]]:
   uniprot_positions = zip(
     enumerate_in_aln(seq_aln1),
     enumerate_in_aln(seq_aln2),
@@ -69,29 +72,31 @@ def region_in_pdb(
     )
     for p1, p2 in wanted_uniprot_positions
   ]
-  mapped_positions = [
+  mapped_positions_2: List[Tuple[int, int]] = [
     (p1, p2)
     for p1, p2 in mapped_positions
     if p1 and p2
   ]
-  mapped_positions = list(zip(*mapped_positions))
-  return mapped_positions
+  mapped_positions_3: Tuple[Tuple[int], Tuple[int]] = tuple(zip(*mapped_positions_2))
+  return mapped_positions_3
 
 def load_pdb_mappings(up_map):
   result = {}
   for k, v in up_map.items():
-    infile = os.path.join(
-      "data",
-      "input",
-      f"{v[0]}.map"
-    )
-    with open(infile, "r", encoding="utf-8") as f_in:
-      data = json.load(f_in)
-      data = {
-        int(p1): int(p2)
-        for p1, p2 in data.items()
-      }
-    result[k] = data
+    for pdb, _ in v:
+      infile = os.path.join(
+        "data",
+        "intermediate",
+        "pdb_mapping",
+        f"{k}_{pdb}.map"
+      )
+      with open(infile, "r", encoding="utf-8") as f_in:
+        data = json.load(f_in)
+        data = {
+          int(p1): int(p2)
+          for p1, p2 in data.items()
+        }
+      result[(k, pdb)] = data
   return result
 
 def load_up_maps():
@@ -115,7 +120,7 @@ def retain_region(struct, chain, region):
         if res.id[1] in region:
           c.add(res)
 
-def export_aligned_full_pdbs(up1, up2, up_map, struc1, struc2):
+def export_aligned_full_pdbs(up1, up2, pdb1, pdb2, struc1, struc2):
   st = Structure("Aligned")
   st.add(struc1[0])
   m2 = deepcopy(struc2[0])
@@ -127,54 +132,81 @@ def export_aligned_full_pdbs(up1, up2, up_map, struc1, struc2):
     "data",
     "output",
     f"aligned_full_{up1}_{up2}"
-    f"_{up_map[up1][0]}"
-    f"_{up_map[up2][0]}"
+    f"_{pdb1}"
+    f"_{pdb2}"
     ".pdb"
   )
   io.save(outfile)
 
-def main():
-  # Carga datos de los dominios.
-  domains = load_domains()
+def read_sequences():
+  seq_file = os.path.join(
+    "data",
+    "input",
+    "sequences.fa"
+  )
+  records = {
+    r.id : str(r.seq)
+    for r in SeqIO.parse(seq_file, "fasta")
+  }
+  return records
 
-  # Lee los uniprot accession de las proteinas a alinear.
-  up1, up2 = list(domains.keys())
+def create_up_to_pdb_maps(aln, up_pdb_map):
+  for up, sequence in aln.items():
+    for pdb_id, chain in up_pdb_map[up]:
+      pdb_file = os.path.join(
+        "data",
+        "input",
+        "pdb",
+        f"{pdb_id}.pdb"
+      )
+      sequence = sequence.replace("-", "")
+      mapped = align_pdb_to_sequence(pdb_file, chain, sequence)
+      mapped = {v:k for k,v in mapped.items()}
+      outfile = os.path.join(
+        "data",
+        "intermediate",
+        "pdb_mapping",
+        f"{up}_{pdb_id}.map"
+      )
+      with open(outfile, "w", encoding="utf8") as f_out:
+        json.dump(mapped, f_out, indent=2)
 
-  # Carga el alineamiento entre las dos secuencias.
-  aln = load_aln()
-
-  # Carga el mapeo de uniprot accession a PDB Id y cadena.
-  up_chain_map = load_up_maps()
-
-  # Carga el mapeo de las posiciones de las secuencias completas
-  # segun Uniprot y los numeros de residuos en el PDB.
-  up_pdb_pos_map = load_pdb_mappings(up_chain_map)
-
+def get_cre_distance_two_kinases(
+    up1, pdb1, chain1, seq1,
+    up2, pdb2, chain2, seq2,
+    domains,
+    up_pdb_pos_map
+  ):
+  kinase1_res = domains[up1]["kinase"]
+  kinase2_res = domains[up2]["kinase"]
+  cre1_res = domains[up1]["cre"]
+  cre2_res = domains[up2]["cre"]
+  pdb_map1 = up_pdb_pos_map[(up1, pdb1)]
+  pdb_map2 = up_pdb_pos_map[(up2, pdb2)]
   # Extrae las posiciones PDBs de los dominios kinasas.
   # Se buscan posiciones que el alineamiento no tengan gaps y
   # que esten dentro de la region del dominio kinasa en
   # ambas proteinas.
   pdbpos1, pdbpos2 = region_in_pdb(
-    aln["Q92918"],
-    aln["Q8IVH8"],
-    domains["Q92918"]["kinase"],
-    domains["Q8IVH8"]["kinase"],
-    up_pdb_pos_map["Q92918"],
-    up_pdb_pos_map["Q8IVH8"]
+    seq1,
+    seq2,
+    kinase1_res,
+    kinase2_res,
+    pdb_map1,
+    pdb_map2
   )
 
   # Lee los archivos PDBs
-  struc1, struc2 = [
-    read_pdb(x, up_chain_map) for x in (up1, up2)
-  ]
+  struc1 = read_pdb(pdb1, up1)
+  struc2 = read_pdb(pdb2, up2)
 
   # Extrae los atomos comparables de los dominios Kinasas
   kinase1 = [
-    struc1[0][up_chain_map[up1][1]][r]["CA"]
+    struc1[0][chain1][r]["CA"]
     for r in pdbpos1
   ]
   kinase2 = [
-    struc2[0][up_chain_map[up2][1]][r]["CA"]
+    struc2[0][chain2][r]["CA"]
     for r in pdbpos2
   ]
 
@@ -190,35 +222,35 @@ def main():
   # Exportar full PDB aligned
   # Las dos estructuras se guardan en el mismo archivo pdb como dos
   # modelos diferentes.
-  export_aligned_full_pdbs(up1, up2, up_chain_map, struc1, struc2)
+  export_aligned_full_pdbs(up1, up2, pdb1, pdb2, struc1, struc2)
 
   # Extrae los números de residuos de los CRE
   # de las dos estructuras.
   pdbpos_cre1, pdbpos_cre2 = region_in_pdb(
-    aln["Q92918"],
-    aln["Q8IVH8"],
-    domains["Q92918"]["cre"],
-    domains["Q8IVH8"]["cre"],
-    up_pdb_pos_map["Q92918"],
-    up_pdb_pos_map["Q8IVH8"]
+    seq1,
+    seq2,
+    cre1_res,
+    cre2_res,
+    up_pdb_pos_map[(up1, pdb1)],
+    up_pdb_pos_map[(up2, pdb2)]
   )
 
   # Elimina todas las cadenas y residuos de las estructuras
   # excepto aquellos que pertenecen al CRE.
-  retain_region(struc1, up_chain_map[up1][1], pdbpos_cre1)
-  retain_region(struc2, up_chain_map[up2][1], pdbpos_cre2)
+  retain_region(struc1, chain1, pdbpos_cre1)
+  retain_region(struc2, chain2, pdbpos_cre2)
 
   # Mergear los dos cre en una sola estructura
   # La cadena de la primer estructura pasa a ser A
   # y la cadena de la segunda pasa a ser B.
-  struc1[0][up_chain_map[up1][1]].id = "A"
-  struc2[0][up_chain_map[up2][1]].id = "B"
+  struc1[0][chain1].id = "A"
+  struc2[0][chain2].id = "B"
   struc1[0].add(struc2[0]["B"])
 
   # Exportar PDB de los CRE
   # Los dos CRE estan en el mismo PDB como dos cadenas
   # diferentes.
-  export_aligned_cre_pdb(up1, up2, up_chain_map, struc1)
+  export_aligned_cre_pdb(up1, up2, pdb1, pdb2, struc1)
 
   # Calcula las distancias
   dist_data = calculate_distances(struc1)
@@ -233,48 +265,140 @@ def main():
   )
 
   # Exporta las distancias entre los CRE a un CSV
-  export_distances(up1, up2, up_chain_map, dist_df)
+  export_distances(up1, pdb1, up2, pdb2, dist_df)
 
-def export_distances(up1, up2, up_chain_map, dist_df):
+  min_dist = dist_df.distance.min()
+  mean_dist = dist_df.distance.mean()
+  df_cre = pd.DataFrame(
+    {
+      "pos1": pdbpos_cre1,
+      "pos2": pdbpos_cre2
+    }
+  )
+  aligned_mean = (
+    dist_df
+      .merge(df_cre, on=["pos1", "pos2"])
+      .distance
+      .mean()
+  )
+  return min_dist, mean_dist, aligned_mean
+
+
+@click.command()
+def align_kinases():
+  print("Aligning PDBs Kinases")
+  # Carga el alineamiento entre las dos secuencias.
+  aln = load_aln()
+  # Carga el mapeo de uniprot accession a PDB Id y cadena.
+  up_chain_map = load_up_maps()
+  # Obtiene una lista de datos de cada combinacion de Uniprot/PDB
+  up_pdbs = [
+    (up, pdb_id, chain, seq)
+    for up, seq in aln.items()
+    for pdb_id, chain in up_chain_map[up]
+  ]
+  pairs_to_compare = combinations(up_pdbs, 2)
+  # Carga datos de los dominios.
+  domains = load_domains()
+  # Carga el mapeo de las posiciones de las secuencias completas
+  # segun Uniprot y los numeros de residuos en el PDB.
+  up_pdb_pos_map = load_pdb_mappings(up_chain_map)
+  # Alinea las kinasas y calcula las distancias del CRE en todos los pares
+  distances = []
+  for elem1, elem2 in pairs_to_compare:
+    up1, pdb1, chain1, seq1 = elem1
+    up2, pdb2, chain2, seq2 = elem2
+    mind, meand, aln_mean = get_cre_distance_two_kinases(
+      up1, pdb1, chain1, seq1,
+      up2, pdb2, chain2, seq2,
+      domains,
+      up_pdb_pos_map
+    )
+    distances.append(
+      [
+        up1, pdb1, chain1,
+        up2, pdb2, chain2,
+        mind, meand, aln_mean
+      ]
+    )
+  dist_file = os.path.join(
+    "data",
+    "output",
+    "distance_summary.csv"
+  )
+  pd.DataFrame(
+    distances,
+    columns = [
+      "up1", "pdb1", "chain1",
+      "up2", "pdb2", "chain2",
+      "min_distance",
+      "mean_distance",
+      "aligned_mean_distance"
+    ]
+  ).to_csv(
+    dist_file,
+    index = False
+  )
+
+
+def export_distances(up1, pdb1, up2, pdb2, dist_df):
   dist_file = os.path.join(
     "data",
     "output",
     f"distances_{up1}_{up2}_"
-    f"{up_chain_map[up1][0]}_"
-    f"{up_chain_map[up2][0]}"
+    f"{pdb1}_"
+    f"{pdb2}"
     ".csv"
   )
   (
     dist_df
-      .loc[:, "distance"]
       .reset_index(drop=True)
       .to_csv(dist_file, index=False, header = False)
   )
 
-
-def read_pdb(up, up_chain_map):
+def read_pdb(pdb, up):
   pdb_file = (
     os.path.join(
       "data",
       "input",
-      f"{up_chain_map[up][0]}.pdb",
+      "pdb",
+      f"{pdb}.pdb",
     )
   )
   struc = PDBParser().get_structure(id=up, file=pdb_file)
   return struc
 
-def export_aligned_cre_pdb(up1, up2, up_chain_map, struct):
-    io=PDBIO()
-    io.set_structure(struct)
-    outfile = os.path.join(
-      "data",
-      "output",
-      f"aligned_cre_{up1}_{up2}"
-      f"_{up_chain_map[up1][0]}"
-      f"_{up_chain_map[up2][0]}"
-      ".pdb"
-    )
-    io.save(outfile)
+def export_aligned_cre_pdb(up1, up2, pdb1, pdb2, struct):
+  io=PDBIO()
+  io.set_structure(struct)
+  outfile = os.path.join(
+    "data",
+    "output",
+    f"aligned_cre_{up1}_{up2}"
+    f"_{pdb1}"
+    f"_{pdb2}"
+    ".pdb"
+  )
+  io.save(outfile)
+
+@click.group()
+def cli():
+  print("Align PDBS")
+
+@click.command()
+def create_pdb_mappings():
+  print("Generating Uniprot to PDB Mappings")
+  # Carga el alineamiento entre las dos secuencias.
+  aln = load_aln()
+
+  # Carga el mapeo de uniprot accession a PDB Id y cadena.
+  up_chain_map = load_up_maps()
+
+  # Crea los mapeos de las secuencias de Uniprot a los PDB.
+  create_up_to_pdb_maps(aln, up_chain_map)
+
+cli.add_command(create_pdb_mappings)
+cli.add_command(align_kinases)
 
 if __name__ == '__main__':
-  main()
+  cli()
