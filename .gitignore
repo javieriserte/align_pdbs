@@ -11,5 +11,7 @@ data/output/*
 data/input/*
 !data/input/example/
 
+data2
+
 # log file
 log
