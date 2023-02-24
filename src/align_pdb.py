@@ -12,7 +12,8 @@ from tqdm import tqdm
 import click
 import pandas as pd
 from Bio import SeqIO
-from Bio.PDB import Superimposer
+from Bio.PDB import Superimposer, Selection
+from Bio.PDB.Residue import Residue
 from Bio.PDB.PDBIO import PDBIO
 from Bio.PDB.PDBParser import PDBParser
 from Bio.PDB.Structure import Structure
@@ -142,7 +143,9 @@ def retain_region(struct, chain, region):
 
 def export_aligned_full_pdbs(folder, job, up1, up2, pdb1, pdb2, struc1, struc2):
   st = Structure("Aligned")
-  st.add(struc1[0])
+  m1 = struc1[0]
+  m1.id = 0
+  st.add(m1)
   m2 = deepcopy(struc2[0])
   m2.id=1
   st.add(m2)
@@ -404,6 +407,25 @@ def export_distances(up1, pdb1, up2, pdb2, dist_df, folder, job):
   )
 
 def read_pdb(pdb, up, folder):
+  def _fix_alternative_use_residues(struct):
+    res_list = Selection.unfold_entities(struc, "R")
+    if not res_list:
+      raise ValueError("Not PDB")
+    for r in res_list:
+      if not isinstance(r, Residue):
+        continue
+      _, b, _ = r.id
+      r.id = (' ', b, ' ')
+  def _remove_non_wanted_models(struct):
+    models = struct.get_models()
+    wanted_model = models[0].id
+    models_to_remove = [
+      m
+      for m in models
+      if m.id != wanted_model.id
+    ]
+    for m in models_to_remove:
+      m.parent.detach_child(m.id)
   pdb_file = (
     os.path.join(
       folder,
@@ -413,6 +435,8 @@ def read_pdb(pdb, up, folder):
     )
   )
   struc = PDBParser().get_structure(id=up, file=pdb_file)
+  _fix_alternative_use_residues(struc)
+  _remove_non_wanted_models(struc)
   return struc
 
 def export_aligned_cre_pdb(up1, up2, pdb1, pdb2, struct, folder, job):
