@@ -4,7 +4,6 @@ import logging
 import os
 from copy import deepcopy
 from itertools import combinations
-from logging import WARNING
 from typing import Dict, List, Tuple
 from numpy import sqrt
 
@@ -65,7 +64,7 @@ def region_in_pdb(
     reg2: Tuple[int, int],
     map1: Dict[int, int],
     map2: Dict[int, int]
-  ) -> Tuple[Tuple[int], Tuple[int]]:
+  ) -> Tuple[List[int], List[int]]:
   uniprot_positions = zip(
     enumerate_in_aln(seq_aln1),
     enumerate_in_aln(seq_aln2),
@@ -89,8 +88,10 @@ def region_in_pdb(
     for p1, p2 in mapped_positions
     if p1 and p2
   ]
-  mapped_positions_3: Tuple[Tuple[int], Tuple[int]] = tuple(zip(*mapped_positions_2))
-  return mapped_positions_3
+  if len(mapped_positions_2) == 0:
+    return [], []
+  mapped1, mapped2 = tuple(zip(*mapped_positions_2))
+  return list(mapped1), list(mapped2)
 
 def load_pdb_mappings(up_map, folder):
   result = {}
@@ -226,6 +227,8 @@ def get_cre_distance_two_kinases(
     pdb_map1,
     pdb_map2
   )
+  if not pdbpos1 or not pdbpos2:
+    return (None, None, None, None, None, None)
   # Lee los archivos PDBs
   struc1 = read_pdb(pdb1, up1, folder)
   struc2 = read_pdb(pdb2, up2, folder)
@@ -252,7 +255,7 @@ def get_cre_distance_two_kinases(
   export_aligned_full_pdbs(folder, job, up1, up2, pdb1, pdb2, struc1, struc2)
   # Extrae los números de residuos de los CRE
   # de las dos estructuras.
-  reg_in_pdb = region_in_pdb(
+  pdbpos_cre1, pdbpos_cre2 = region_in_pdb(
     seq1,
     seq2,
     cre1_res,
@@ -260,9 +263,8 @@ def get_cre_distance_two_kinases(
     up_pdb_pos_map[(up1, pdb1)],
     up_pdb_pos_map[(up2, pdb2)]
   )
-  if not reg_in_pdb:
+  if not pdbpos_cre1 or not pdbpos_cre2:
     return (None, None, None, None, None, None)
-  pdbpos_cre1, pdbpos_cre2 = reg_in_pdb
   # Elimina todas las cadenas y residuos de las estructuras
   # excepto aquellos que pertenecen al CRE.
   retain_region(struc1, chain1, pdbpos_cre1)
@@ -336,7 +338,7 @@ def align_kinases(folder, job):
   if len(up_pdbs) <= 1:
     print("Not enough pdbs to compare.")
     return
-  pairs_to_compare = combinations(up_pdbs, 2)
+  pairs_to_compare = list(combinations(up_pdbs, 2))
   # Carga datos de los dominios.
   domains = load_domains(folder)
   # Carga el mapeo de las posiciones de las secuencias completas
@@ -348,25 +350,29 @@ def align_kinases(folder, job):
     return
   distances = []
   print("- Alineando y calculando distancias:")
-  for elem1, elem2 in (pbar:= tqdm(pairs_to_compare)):
+  for i, (elem1, elem2) in enumerate(pairs_to_compare):
     up1, pdb1, chain1, seq1 = elem1
     up2, pdb2, chain2, seq2 = elem2
-    pbar.set_description(f"  - {up1}-{pdb1}:{chain1} vs. {up2}-{pdb2}:{chain2}")
-    mind, meand, aln_mean, rmsd, aln_max, kin_rmsd = get_cre_distance_two_kinases(
-      up1, pdb1, chain1, seq1,
-      up2, pdb2, chain2, seq2,
-      domains,
-      up_pdb_pos_map,
-      folder,
-      job
-    )
-    distances.append(
-      [
-        up1, pdb1, chain1,
-        up2, pdb2, chain2,
-        mind, meand, aln_mean, rmsd, aln_max, kin_rmsd
-      ]
-    )
+    # pbar.set_description(f"  - {up1}-{pdb1}:{chain1} vs. {up2}-{pdb2}:{chain2}")
+    print(f"  - {i+1}/{len(pairs_to_compare)} | {up1}-{pdb1}:{chain1} vs. {up2}-{pdb2}:{chain2}")
+    try:
+      mind, meand, aln_mean, rmsd, aln_max, kin_rmsd = get_cre_distance_two_kinases(
+        up1, pdb1, chain1, seq1,
+        up2, pdb2, chain2, seq2,
+        domains,
+        up_pdb_pos_map,
+        folder,
+        job
+      )
+      distances.append(
+        [
+          up1, pdb1, chain1,
+          up2, pdb2, chain2,
+          mind, meand, aln_mean, rmsd, aln_max, kin_rmsd
+        ]
+      )
+    except Exception as e:
+      print(f"There was an error: {str(e)}")
   # Expotar distance summary
   export_distance_summary(distances, folder, job)
 

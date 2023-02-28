@@ -1,11 +1,11 @@
-files=$(ls data2/input/*_gapstrip)
+files=$(ls data3/input/*_fullidentity*)
 for x in ${files}
 do
-    echo $x
-    base=$(sed 's/data2.input.//g'<<<"${x}")
-    cp $x data2/input/aln.fa
+    base=$(sed 's/data3.input.\(.\+\)_clustalO.\+$/\1/g'<<<"${x}")
+    echo $base
+    cp $x data3/input/aln.fa
     echo " "
     echo "######### $base ###########"
-    python src/align_pdb.py create-pdb-mappings data2
-    python src/align_pdb.py align-kinases data2 $base
+    python src/align_pdb.py create-pdb-mappings data3
+    python src/align_pdb.py align-kinases data3 $base
 done
