@@ -261,7 +261,7 @@ def get_cre_distance_two_kinases(
     up_pdb_pos_map[(up2, pdb2)]
   )
   if not reg_in_pdb:
-    return (None, None, None, None, None)
+    return (None, None, None, None, None, None)
   pdbpos_cre1, pdbpos_cre2 = reg_in_pdb
   # Elimina todas las cadenas y residuos de las estructuras
   # excepto aquellos que pertenecen al CRE.
@@ -310,7 +310,13 @@ def get_cre_distance_two_kinases(
       .pow(2)
       .mean()
   )
-  return min_dist, mean_dist, aligned_mean, rmsd, kin_rmsd
+  aligned_max = (
+    dist_df
+      .merge(df_cre, on=["pos1", "pos2"])
+      .distance
+      .max()
+  )
+  return min_dist, mean_dist, aligned_mean, rmsd, aligned_max, kin_rmsd
 
 @click.command()
 @click.argument('folder', type=click.Path(exists=True), default="data")
@@ -346,7 +352,7 @@ def align_kinases(folder, job):
     up1, pdb1, chain1, seq1 = elem1
     up2, pdb2, chain2, seq2 = elem2
     pbar.set_description(f"  - {up1}-{pdb1}:{chain1} vs. {up2}-{pdb2}:{chain2}")
-    mind, meand, aln_mean, rmsd, kin_rmsd = get_cre_distance_two_kinases(
+    mind, meand, aln_mean, rmsd, aln_max, kin_rmsd = get_cre_distance_two_kinases(
       up1, pdb1, chain1, seq1,
       up2, pdb2, chain2, seq2,
       domains,
@@ -358,7 +364,7 @@ def align_kinases(folder, job):
       [
         up1, pdb1, chain1,
         up2, pdb2, chain2,
-        mind, meand, aln_mean, rmsd, kin_rmsd
+        mind, meand, aln_mean, rmsd, aln_max, kin_rmsd
       ]
     )
   # Expotar distance summary
@@ -381,6 +387,7 @@ def export_distance_summary(distances, folder, job_name):
       "mean_distance",
       "aligned_mean_distance",
       "rmsd",
+      "aln_max",
       "rmsd kinases"
     ]
   ).to_csv(
@@ -417,12 +424,12 @@ def read_pdb(pdb, up, folder):
       _, b, _ = r.id
       r.id = (' ', b, ' ')
   def _remove_non_wanted_models(struct):
-    models = struct.get_models()
+    models = list(struct.get_models())
     wanted_model = models[0].id
     models_to_remove = [
       m
       for m in models
-      if m.id != wanted_model.id
+      if m.id != wanted_model
     ]
     for m in models_to_remove:
       m.parent.detach_child(m.id)
