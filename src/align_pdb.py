@@ -7,7 +7,6 @@ from itertools import combinations
 from typing import Dict, List, Tuple
 from numpy import sqrt
 
-from tqdm import tqdm
 import click
 import pandas as pd
 from Bio import SeqIO
