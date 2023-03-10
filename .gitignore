@@ -4,6 +4,8 @@
 # .vscode configurations files
 .vscode
 
+*.pyc
+
 # Some data files
 data/intermediate
 data/output/*
@@ -13,6 +15,12 @@ data/input/*
 
 data2
 data3
+data4
 
 # log file
 log
+*.log
+
+output.png
+
+*.ipynb
