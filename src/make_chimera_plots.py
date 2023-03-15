@@ -136,10 +136,10 @@ def generate_scripts(series: pd.Series) -> Any:
     chimera_mmaker(kd1_atomspec, kd2_atomspec)
   ]
 
-  cov_file = get_cov_file(ref_up)
+  cov_file = get_cov_file(ref_up, "top1")
   if os.path.exists(cov_file):
     cov_data = (
-      load_cov_data(ref_up)
+      load_cov_data(ref_up, "top1")
         .assign(
           mapped1 = lambda x:
             x.pos1.apply(mappdb1.from_seq_to_residue_number)
@@ -252,17 +252,17 @@ def chimera_open(file) -> str:
   return f"open {file}"
 
 
-def get_cov_file(up_acc: str) -> str:
+def get_cov_file(up_acc: str, top: str) -> str:
   cov_file = os.path.join(
     "data3",
     "input",
     "cov",
-    f"covariation_top1_{up_acc}.csv"
+    f"covariation_{top}_{up_acc}.csv"
   )
   return cov_file
 
-def load_cov_data(ref_up:str) -> pd.DataFrame:
-  cov_file = get_cov_file(ref_up)
+def load_cov_data(ref_up:str, top: str) -> pd.DataFrame:
+  cov_file = get_cov_file(ref_up, top)
   data = (
     pd
       .read_csv(cov_file)
@@ -311,9 +311,9 @@ def read_region_data() -> pd.DataFrame:
     .assign(kd2 = lambda x: _str_to_list(x.kd2))
     .assign(cre1 = lambda x: _str_to_list(x.cre1))
     .assign(cre2 = lambda x: _str_to_list(x.cre2))
-    .assign(cov_file = lambda x: x.ref.apply(get_cov_file))
+    .assign(cov_file = lambda x: x.ref.apply(get_cov_file, top="top01"))
     .assign(has_cov_data =
-      lambda x: x.ref.apply(lambda y : os.path.exists(get_cov_file(y)))
+      lambda x: x.ref.apply(lambda y : os.path.exists(get_cov_file(y, "top01")))
     )
     # .query("has_cov_data")
     # .iloc[[16], :]

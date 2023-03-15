@@ -24,3 +24,6 @@ log
 output.png
 
 *.ipynb
+
+# cache folder
+cache
