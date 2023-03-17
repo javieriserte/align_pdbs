@@ -13,6 +13,8 @@ data/output/*
 data/input/*
 !data/input/example/
 
+cre_kinase_distances
+
 data2
 data3
 data4
