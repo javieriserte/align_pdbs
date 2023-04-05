@@ -1,5 +1,6 @@
 import os
 import pickle
+from typing import Optional
 import warnings
 
 import click
@@ -38,6 +39,7 @@ def get_color_map():
     [0.4, 0.8, 0.6], # contact in 2 and cov
     [0.6, 0.4, 0.8], # contact in 3 and cov
     [0.5, 0.5, 0.5], # cov and not contact
+    [0.8, 0.0, 0.9], # Cat site
     [0.0, 0.0, 0.0]  # Diagonal
   ]
   my_cmap = LinearSegmentedColormap.from_list(
@@ -108,14 +110,15 @@ def create_contact_matrix(
     pdb_distances,
     cres,
     kinases,
-    cov_data
+    cov_data,
+    cat_sites:Optional[list[list[int]]] = None
   ):
   contact_map = np.zeros(shape = (max_up, max_up))
   background_map = np.zeros(shape = (max_up, max_up))
   for i in range(max_up-1):
     for j in range(i, max_up):
       if i == j:
-        background_map[i, j] = 10
+        background_map[i, j] = 11
         continue
       up_data = zip(mappdbs, chains, seq_mappers, pdb_distances, cres, kinases)
       for mappdb, chain, seq_mapper, dist, cre, kinase in up_data:
@@ -150,6 +153,14 @@ def create_contact_matrix(
         if (up1_in_cre and up2_in_kinase) or (up1_in_kinase and up2_in_cre):
           background_map[i, j] = 4
           background_map[j, i] = 4
+  if cat_sites:
+    for c_sites, seq_mapper in zip(cat_sites, seq_mappers):
+      rev_seqmapper = {v:k for k, v in seq_mapper.items()}
+      for c_site in c_sites:
+        pos = rev_seqmapper.get(c_site)
+        for i in range(max_up-1):
+          background_map[pos, i] = 10
+          background_map[i, pos] = 10
   final_map = background_map
   final_map[contact_map.nonzero()] = contact_map[contact_map.nonzero()]
   df = add_covdata_to_matrix(cov_data, max_up)
@@ -163,7 +174,31 @@ def create_contact_matrix(
   final_map[df.nonzero()] = df[df.nonzero()]
   return final_map
 
-def make_superimposed_cov_data_plot(data: pd.DataFrame, folder:str="") -> float:
+def load_catsites(folder:str) -> dict[str, list[int]]:
+  catsites_file = os.path.join(
+    folder,
+    "input",
+    "cat_sites_uniprot.tsv"
+  )
+  df = (
+    pd.read_csv(
+      catsites_file,
+      sep="\t",
+      header=0
+    )
+    .groupby("uniprot")
+    .apply(
+      lambda x: x["pos"].to_list()
+    )
+    .to_dict()
+  )
+  return df
+
+def make_superimposed_cov_data_plot(
+    data: pd.DataFrame,
+    folder:str="",
+    include_catsites:bool=False
+  ) -> float:
   up_ref = data["up_ref"].iloc[0]
   msa_data = read_ref_msa(up_ref)
   ref_len = len(msa_data[up_ref])
@@ -175,6 +210,15 @@ def make_superimposed_cov_data_plot(data: pd.DataFrame, folder:str="") -> float:
     )
     for u, p, c in zip(data["up"], data["pdb"], data["chain"])
   ]
+  if include_catsites:
+    cat_sites_map = load_catsites(folder)
+    cat_sites = [
+      cat_sites_map[up]
+      for up in data["up"]
+    ]
+  else:
+    cat_sites = []
+  # exit()
   seq_mappers = [
     map_align(msa_data[up_ref], msa_data[u])
     for u in data["up"]
@@ -203,7 +247,7 @@ def make_superimposed_cov_data_plot(data: pd.DataFrame, folder:str="") -> float:
       .apply(tuple, axis=1)
       .to_list()
   )
-  cov_data = load_cov_data(up_ref, "top01")
+  cov_data = load_cov_data(up_ref, "top1")
   contact_map = create_contact_matrix(
     max_up,
     map_pdbs,
@@ -212,7 +256,8 @@ def make_superimposed_cov_data_plot(data: pd.DataFrame, folder:str="") -> float:
     pdb_distances = distances,
     cres = cres,
     kinases = kinases,
-    cov_data = cov_data
+    cov_data = cov_data,
+    cat_sites = cat_sites
   )
   my_cmap = get_color_map()
   fig, axes = plt.subplots(figsize=(40, 40))
@@ -298,10 +343,13 @@ def collect_summfiles(data):
   return results
 
 def append_inverted_pdbs(df: pd.DataFrame) -> pd.DataFrame:
-  return df.append(
-    df.rename(
-      columns = {"pdb1":"pdb2", "pdb2":"pdb1"}
-    )
+  return pd.concat(
+    [
+      df,
+      df.rename(
+        columns = {"pdb1":"pdb2", "pdb2":"pdb1"}
+      )
+    ]
   )
 
 def mds_plot_distance(summ_file:str):
@@ -372,8 +420,24 @@ def create_contact_maps(data):
       .apply(make_superimposed_cov_data_plot, folder=data)
   )
 
+@click.command()
+@click.option("--data", default="data", help="Data folder")
+def create_contact_maps_with_catsites(data):
+  print("Creating contact maps with catalytic sites")
+  superimpose_data = load_superimpose_cov_data("data3")
+  (
+    superimpose_data
+      .groupby("up_ref")
+      .apply(
+        make_superimposed_cov_data_plot,
+        folder=data,
+        include_catsites=True
+      )
+  )
+
 cli.add_command(create_cre_cre_mds_plots)
 cli.add_command(create_contact_maps)
+cli.add_command(create_contact_maps_with_catsites)
 
 if __name__ == "__main__":
   warnings.simplefilter(
