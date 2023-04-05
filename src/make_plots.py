@@ -218,7 +218,6 @@ def make_superimposed_cov_data_plot(
     ]
   else:
     cat_sites = []
-  # exit()
   seq_mappers = [
     map_align(msa_data[up_ref], msa_data[u])
     for u in data["up"]
