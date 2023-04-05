@@ -115,8 +115,8 @@ def calc_kin_cre_distances(up:str, folder:str):
                 lambda y: all(v is None for v in y)
               )
       )
-      .query("not all_none_cre")
-      .drop("all_none_cre", axis=1)
+      # .query("not all_none_cre")
+      # .drop("all_none_cre", axis=1)
       .assign(
         pdb_residues_kin =
           lambda x:
@@ -136,8 +136,8 @@ def calc_kin_cre_distances(up:str, folder:str):
                 lambda y: all(v is None for v in y)
               )
       )
-      .query("not all_none_kin")
-      .drop("all_none_kin", axis=1)
+      # .query("not all_none_kin")
+      # .drop("all_none_kin", axis=1)
       .assign(
         common_kin_res =
           lambda x:
